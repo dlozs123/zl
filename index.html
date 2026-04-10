@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>漫画图库管理</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Noto+Serif+SC:wght@400;600&display=swap');
+
+  :root {
+    --bg: #0d0d0f;
+    --surface: #141416;
+    --surface2: #1c1c20;
+    --border: #2a2a30;
+    --text: #e8e6e0;
+    --text-muted: #6b6970;
+    --text-dim: #3d3c42;
+    --accent: #e8c97a;
+    --accent-dim: rgba(232,201,122,0.15);
+    --red: #e85d5d;
+    --red-dim: rgba(232,93,93,0.18);
+    --green: #5de8a0;
+    --radius: 4px;
+    --mono: 'DM Mono', monospace;
+    --serif: 'Noto Serif SC', serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    overflow: hidden;
+  }
+
+  /* ── Layout ── */
+  #app { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ── Header ── */
+  #header {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    z-index: 10;
+  }
+
+  #header-title {
+    font-family: var(--serif);
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--text);
+  }
+
+  #breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  #breadcrumb .crumb-link {
+    color: var(--accent);
+    cursor: pointer;
+    text-decoration: none;
+    transition: opacity 0.15s;
+  }
+  #breadcrumb .crumb-link:hover { opacity: 0.7; }
+  #breadcrumb .sep { color: var(--text-dim); }
+
+  #header-stats {
+    margin-left: auto;
+    color: var(--text-muted);
+    font-size: 11px;
+  }
+
+  #header-stats .del-count {
+    color: var(--red);
+  }
+
+  /* ── Scroll container ── */
+  #scroll-area {
+    flex: 1;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 20px;
+    scroll-behavior: smooth;
+  }
+
+  #scroll-area::-webkit-scrollbar { width: 4px; }
+  #scroll-area::-webkit-scrollbar-track { background: transparent; }
+  #scroll-area::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  /* ── Loading screen ── */
+  #loading {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 16px;
+    background: var(--bg);
+    z-index: 100;
+    font-family: var(--mono);
+  }
+
+  #loading .load-title {
+    font-family: var(--serif);
+    font-size: 18px;
+    color: var(--text);
+  }
+
+  #loading .load-sub {
+    color: var(--text-muted);
+    font-size: 12px;
+  }
+
+  .spinner {
+    width: 32px; height: 32px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ── Mode banner ── */
+  #mode-banner {
+    position: fixed;
+    top: 57px; left: 0; right: 0;
+    height: 32px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    z-index: 9;
+    transform: translateY(-100%);
+    transition: transform 0.2s ease;
+    pointer-events: none;
+  }
+  #mode-banner.visible { transform: translateY(0); }
+  #mode-banner.delete-mode {
+    background: var(--red-dim);
+    color: var(--red);
+    border-bottom: 1px solid rgba(232,93,93,0.3);
+  }
+
+  /* ── Folder Grid ── */
+  #folder-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px;
+  }
+
+  .folder-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.15s, transform 0.15s;
+    aspect-ratio: 2/3;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .folder-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-2px);
+  }
+
+  .folder-card.delete-mode:hover {
+    border-color: var(--red);
+  }
+
+  .folder-card.marked {
+    border-color: var(--red) !important;
+    outline: 2px solid var(--red);
+    outline-offset: -2px;
+  }
+
+  .folder-cover {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+    background: var(--surface2);
+  }
+
+  .folder-cover img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .folder-cover img.loaded { opacity: 1; }
+
+  .folder-cover-placeholder {
+    width: 100%; height: 100%;
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-dim);
+    font-size: 24px;
+  }
+
+  .folder-info {
+    padding: 8px 10px;
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+
+  .folder-name {
+    font-size: 11px;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    line-height: 1.4;
+  }
+
+  .folder-count {
+    font-size: 10px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .mark-overlay {
+    position: absolute;
+    inset: 0;
+    background: var(--red-dim);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .marked .mark-overlay { opacity: 1; }
+
+  .mark-icon {
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    background: var(--red);
+    display: flex; align-items: center; justify-content: center;
+    color: white;
+    font-size: 18px;
+  }
+
+  /* ── Image Grid (inner page) ── */
+  #image-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 8px;
+  }
+
+  .img-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    cursor: default;
+    aspect-ratio: 2/3;
+  }
+
+  .img-card.delete-mode {
+    cursor: pointer;
+  }
+
+  .img-card.delete-mode:hover { border-color: var(--red); }
+  .img-card.delete-mode:hover .mark-overlay { opacity: 0.4; }
+
+  .img-card.marked {
+    border-color: var(--red) !important;
+    outline: 2px solid var(--red);
+    outline-offset: -2px;
+  }
+  .img-card.marked .mark-overlay { opacity: 1; }
+
+  .img-card img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .img-card img.loaded { opacity: 1; }
+
+  .img-name {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    padding: 4px 6px;
+    font-size: 9px;
+    color: var(--text-muted);
+    background: linear-gradient(transparent, rgba(0,0,0,0.7));
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  /* ── Floating Controls ── */
+  #float-bar {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 20;
+    align-items: flex-end;
+  }
+
+  .fab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    border: 1px solid var(--border);
+    border-radius: 28px;
+    background: var(--surface2);
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+
+  .fab:hover { border-color: var(--accent); color: var(--accent); }
+
+  .fab.mode-toggle.active-delete {
+    border-color: var(--red);
+    color: var(--red);
+    background: var(--red-dim);
+  }
+
+  .fab.export-btn {
+    border-color: var(--green);
+    color: var(--green);
+  }
+  .fab.export-btn:hover {
+    background: rgba(93,232,160,0.1);
+  }
+
+  .fab-icon { font-size: 16px; line-height: 1; }
+
+  /* ── Empty state ── */
+  .empty-state {
+    grid-column: 1/-1;
+    padding: 80px 20px;
+    text-align: center;
+    color: var(--text-muted);
+  }
+  .empty-state .empty-icon { font-size: 40px; margin-bottom: 16px; }
+
+  /* ── Scroll-to-top ── */
+  #back-top {
+    position: fixed;
+    bottom: 24px; left: 24px;
+    width: 40px; height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text-muted);
+    font-size: 18px;
+    cursor: pointer;
+    display: none;
+    align-items: center; justify-content: center;
+    z-index: 20;
+    transition: all 0.15s;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+  }
+  #back-top:hover { color: var(--accent); border-color: var(--accent); }
+  #back-top.visible { display: flex; }
+
+  /* ── Notification toast ── */
+  #toast {
+    position: fixed;
+    bottom: 80px; left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--text);
+    opacity: 0;
+    transition: opacity 0.2s, transform 0.2s;
+    z-index: 30;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  #toast.show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  /* ── Mode padding (when banner visible) ── */
+  body.delete-active #scroll-area { padding-top: 52px; }
+
+  /* ── Modal ── */
+  #modal {
+    position: fixed; inset: 0;
+    z-index: 50;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s ease;
+  }
+  #modal.open {
+    opacity: 1;
+    pointer-events: all;
+  }
+
+  #modal-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,0.92);
+  }
+
+  /* navigation zones sit above backdrop, beside the image */
+  #modal-inner {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+  }
+
+  .modal-nav {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 50%;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    color: rgba(255,255,255,0.3);
+    font-size: 40px;
+    transition: color 0.15s;
+    user-select: none;
+    z-index: 1;
+  }
+  .modal-nav:hover {
+    color: rgba(255,255,255,0.9);
+  }
+  #modal-prev { left: 0; justify-content: flex-start; padding-left: 40px; }
+  #modal-next { right: 0; justify-content: flex-end; padding-right: 40px; }
+  .modal-nav.hidden { opacity: 0; pointer-events: none; }
+
+  #modal-img-wrap {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 2;
+    pointer-events: none;
+    overflow: hidden;
+  }
+
+  #modal-img {
+    max-height: 100vh;
+    max-width: 100%;
+    width: auto;
+    height: 100vh;
+    object-fit: contain;
+    display: block;
+    user-select: none;
+    pointer-events: auto; /* clicks on image itself won't trigger page turn */
+    transition: opacity 0.15s;
+  }
+  #modal-img.loading { opacity: 0.3; }
+
+  /* close button */
+  #modal-close {
+    position: fixed;
+    top: 16px; right: 20px;
+    z-index: 60;
+    width: 36px; height: 36px;
+    border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.2);
+    background: rgba(30,30,34,0.8);
+    color: rgba(255,255,255,0.7);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    backdrop-filter: blur(6px);
+    transition: all 0.15s;
+    line-height: 1;
+  }
+  #modal-close:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+    background: rgba(30,30,34,0.95);
+  }
+
+  /* counter */
+  #modal-counter {
+    position: fixed;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    z-index: 60;
+    font-size: 11px;
+    color: rgba(255,255,255,0.35);
+    font-family: var(--mono);
+    pointer-events: none;
+    letter-spacing: 0.1em;
+  }
+
+  /* img-card cursor in view mode */
+  .img-card.view-mode { cursor: zoom-in; }
+</style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="spinner"></div>
+  <div class="load-title">漫画图库</div>
+  <div class="load-sub">正在加载结构文件…</div>
+</div>
+
+<div id="app" style="display:none">
+  <div id="header">
+    <div id="header-title">漫画图库</div>
+    <div id="breadcrumb">
+      <span class="crumb-link" id="crumb-home" onclick="goHome()">全部文件夹</span>
+      <span class="sep" id="crumb-sep" style="display:none">›</span>
+      <span id="crumb-folder" style="display:none"></span>
+    </div>
+    <div id="header-stats">
+      <span id="stat-text"></span>
+    </div>
+  </div>
+
+  <div id="mode-banner">
+    🗑 删除模式 — 点击图片/文件夹标记删除
+  </div>
+
+  <div id="scroll-area">
+    <div id="folder-grid"></div>
+    <div id="image-grid" style="display:none"></div>
+  </div>
+</div>
+
+<div id="float-bar">
+  <button class="fab export-btn" id="export-btn" onclick="exportList()" style="display:none">
+    <span class="fab-icon">⬇</span> 导出删除列表
+  </button>
+  <button class="fab mode-toggle" id="mode-btn" onclick="toggleMode()">
+    <span class="fab-icon" id="mode-icon">👁</span>
+    <span id="mode-label">浏览模式</span>
+  </button>
+</div>
+
+<button id="back-top" onclick="scrollToTop()" title="回到顶部">↑</button>
+
+<div id="toast"></div>
+
+<!-- ── Modal ── -->
+<div id="modal">
+  <div id="modal-backdrop"></div>
+  <div id="modal-inner">
+    <div class="modal-nav" id="modal-prev" onclick="modalNav(-1)">&#8249;</div>
+    <div id="modal-img-wrap">
+      <img id="modal-img" src="" alt="">
+    </div>
+    <div class="modal-nav" id="modal-next" onclick="modalNav(1)">&#8250;</div>
+  </div>
+</div>
+<button id="modal-close" onclick="closeModal()" style="display:none">✕</button>
+<div id="modal-counter" style="display:none"></div>
+
+<script>
+// ─────────────────────────────────────────────
+//  Config
+// ─────────────────────────────────────────────
+const BASE_URL = 'https://p1.dlozs.top/manga';
+const LS_KEY   = 'manga_deleted_v1';
+
+// ─────────────────────────────────────────────
+//  State
+// ─────────────────────────────────────────────
+let data        = [];          // parsed structure.json
+let deletedSet  = new Set();   // paths marked for deletion
+let mode        = 'view';      // 'view' | 'delete'
+let curFolder   = null;        // null = home, else folder object
+let observers   = [];          // IntersectionObservers to disconnect on navigate
+
+// modal state
+let modalIndex  = 0;
+let modalList   = [];          // array of {src, path} for current folder
+
+// ─────────────────────────────────────────────
+//  LocalStorage helpers
+// ─────────────────────────────────────────────
+function loadState() {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (raw) deletedSet = new Set(JSON.parse(raw));
+  } catch(e) { deletedSet = new Set(); }
+}
+
+function saveState() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify([...deletedSet]));
+  } catch(e) { showToast('⚠ 存储失败，可能已满'); }
+}
+
+// ─────────────────────────────────────────────
+//  Init
+// ─────────────────────────────────────────────
+async function init() {
+  loadState();
+  try {
+    const res  = await fetch('./structure.json');
+    if (!res.ok) throw new Error(res.statusText);
+    data = await res.json();
+  } catch(e) {
+    document.querySelector('#loading .load-sub').textContent = '❌ 无法加载 structure.json: ' + e.message;
+    return;
+  }
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('app').style.display = 'flex';
+  renderHome();
+}
+
+// ─────────────────────────────────────────────
+//  Mode toggle
+// ─────────────────────────────────────────────
+function toggleMode() {
+  mode = mode === 'view' ? 'delete' : 'view';
+  applyMode();
+}
+
+function applyMode() {
+  const btn    = document.getElementById('mode-btn');
+  const icon   = document.getElementById('mode-icon');
+  const label  = document.getElementById('mode-label');
+  const banner = document.getElementById('mode-banner');
+
+  if (mode === 'delete') {
+    btn.classList.add('active-delete');
+    icon.textContent  = '🗑';
+    label.textContent = '删除模式';
+    banner.classList.add('visible', 'delete-mode');
+    document.body.classList.add('delete-active');
+  } else {
+    btn.classList.remove('active-delete');
+    icon.textContent  = '👁';
+    label.textContent = '浏览模式';
+    banner.classList.remove('visible', 'delete-mode');
+    document.body.classList.remove('delete-active');
+  }
+
+  // refresh interactive classes on cards
+  if (curFolder) {
+    document.querySelectorAll('.img-card').forEach(card => {
+      card.classList.toggle('delete-mode', mode === 'delete');
+      card.classList.toggle('view-mode',   mode === 'view');
+    });
+  } else {
+    document.querySelectorAll('.folder-card').forEach(card => {
+      card.classList.toggle('delete-mode', mode === 'delete');
+    });
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Stats bar
+// ─────────────────────────────────────────────
+function updateStats() {
+  const exportBtn = document.getElementById('export-btn');
+  const statEl    = document.getElementById('stat-text');
+
+  if (deletedSet.size === 0) {
+    statEl.innerHTML = '';
+    exportBtn.style.display = 'none';
+  } else {
+    statEl.innerHTML = `已标记删除 <span class="del-count">${deletedSet.size}</span> 张`;
+    exportBtn.style.display = 'flex';
+  }
+}
+
+// ─────────────────────────────────────────────
+//  Lazy loading helper
+// ─────────────────────────────────────────────
+function setupLazy(container) {
+  container.querySelectorAll('img[data-src]').forEach(img => {
+    img.setAttribute('loading', 'lazy');
+    img.src = img.dataset.src;
+    img.onload  = () => img.classList.add('loaded');
+    img.onerror = () => img.classList.add('loaded');
+  });
+}
+
+function clearObservers() {
+  observers = [];
+}
+
+// ─────────────────────────────────────────────
+//  Home page
+// ─────────────────────────────────────────────
+function goHome() {
+  curFolder = null;
+  mode      = 'view';
+  applyMode();
+  renderHome();
+}
+
+function renderHome() {
+  curFolder = null;
+  clearObservers();
+
+  document.getElementById('folder-grid').style.display = 'grid';
+  document.getElementById('image-grid').style.display  = 'none';
+  document.getElementById('crumb-sep').style.display   = 'none';
+  document.getElementById('crumb-folder').style.display = 'none';
+  document.getElementById('scroll-area').scrollTop = 0;
+
+  const grid = document.getElementById('folder-grid');
+  grid.innerHTML = '';
+
+  if (!data.length) {
+    grid.innerHTML = '<div class="empty-state"><div class="empty-icon">📂</div>没有找到文件夹</div>';
+    updateStats();
+    return;
+  }
+
+  data.forEach(folder => {
+    const coverImg  = folder.children?.[0]?.name;
+    const coverSrc  = coverImg ? `${BASE_URL}/${encodeURIComponent(folder.name)}/${encodeURIComponent(coverImg)}` : null;
+    const count     = folder.children?.length || 0;
+
+    // Check if whole folder is marked
+    const folderPath  = `manga/${folder.name}`;
+    const allMarked   = folder.children?.length > 0 && folder.children.every(c => deletedSet.has(`manga/${folder.name}/${c.name}`));
+
+    const card = document.createElement('div');
+    card.className = 'folder-card' + (allMarked ? ' marked' : '');
+    card.dataset.folder = folder.name;
+
+    card.innerHTML = `
+      <div class="folder-cover">
+        ${coverSrc
+          ? `<img data-src="${coverSrc}" alt="${folder.name}">`
+          : `<div class="folder-cover-placeholder">📁</div>`}
+        <div class="mark-overlay"><div class="mark-icon">✕</div></div>
+      </div>
+      <div class="folder-info">
+        <div class="folder-name" title="${folder.name}">${folder.name}</div>
+        <div class="folder-count">${count} 张图片</div>
+      </div>
+    `;
+
+    card.addEventListener('click', () => {
+      if (mode === 'delete') {
+        toggleFolderMark(folder, card);
+      } else {
+        openFolder(folder);
+      }
+    });
+
+    grid.appendChild(card);
+  });
+
+  setupLazy(grid);
+  updateStats();
+}
+
+function toggleFolderMark(folder, card) {
+  const children = folder.children || [];
+  if (!children.length) return;
+
+  const allMarked = children.every(c => deletedSet.has(`manga/${folder.name}/${c.name}`));
+
+  if (allMarked) {
+    children.forEach(c => deletedSet.delete(`manga/${folder.name}/${c.name}`));
+    card.classList.remove('marked');
+    showToast(`✓ 取消标记「${folder.name}」(${children.length} 张)`);
+  } else {
+    children.forEach(c => deletedSet.add(`manga/${folder.name}/${c.name}`));
+    card.classList.add('marked');
+    showToast(`🗑 标记删除「${folder.name}」(${children.length} 张)`);
+  }
+
+  saveState();
+  updateStats();
+}
+
+// ─────────────────────────────────────────────
+//  Folder inner page
+// ─────────────────────────────────────────────
+function openFolder(folder) {
+  curFolder = folder;
+  clearObservers();
+
+  document.getElementById('folder-grid').style.display = 'none';
+  document.getElementById('image-grid').style.display  = 'grid';
+  document.getElementById('crumb-sep').style.display   = 'inline';
+  const crumbFolder = document.getElementById('crumb-folder');
+  crumbFolder.style.display  = 'inline';
+  crumbFolder.textContent    = folder.name;
+  document.getElementById('scroll-area').scrollTop = 0;
+
+  const grid = document.getElementById('image-grid');
+  grid.innerHTML = '';
+
+  const children = folder.children || [];
+  if (!children.length) {
+    grid.innerHTML = '<div class="empty-state"><div class="empty-icon">🖼</div>文件夹为空</div>';
+    updateStats();
+    return;
+  }
+
+  // build modal list for this folder
+  modalList = children.map(child => ({
+    src:  `${BASE_URL}/${encodeURIComponent(folder.name)}/${encodeURIComponent(child.name)}`,
+    path: `manga/${folder.name}/${child.name}`
+  }));
+
+  children.forEach((child, index) => {
+    const path = `manga/${folder.name}/${child.name}`;
+    const src  = `${BASE_URL}/${encodeURIComponent(folder.name)}/${encodeURIComponent(child.name)}`;
+    const marked = deletedSet.has(path);
+
+    const card = document.createElement('div');
+    card.className = 'img-card' + (marked ? ' marked' : '') + (mode === 'delete' ? ' delete-mode' : ' view-mode');
+    card.dataset.path = path;
+    card.dataset.index = index;
+
+    card.innerHTML = `
+      <img data-src="${src}" alt="${child.name}">
+      <div class="mark-overlay"><div class="mark-icon">✕</div></div>
+      <div class="img-name">${child.name}</div>
+    `;
+
+    card.addEventListener('click', () => {
+      if (mode === 'delete') {
+        toggleImageMark(card, path);
+      } else {
+        openModal(index);
+      }
+    });
+
+    grid.appendChild(card);
+  });
+
+  setupLazy(grid);
+  updateStats();
+}
+
+function toggleImageMark(card, path) {
+  if (deletedSet.has(path)) {
+    deletedSet.delete(path);
+    card.classList.remove('marked');
+  } else {
+    deletedSet.add(path);
+    card.classList.add('marked');
+  }
+  saveState();
+  updateStats();
+}
+
+// ─────────────────────────────────────────────
+//  Export
+// ─────────────────────────────────────────────
+function exportList() {
+  if (!deletedSet.size) { showToast('没有标记删除的图片'); return; }
+
+  const lines    = [...deletedSet].sort().join('\n');
+  const blob     = new Blob([lines], { type: 'text/plain;charset=utf-8' });
+  const url      = URL.createObjectURL(blob);
+  const a        = document.createElement('a');
+  const ts       = new Date().toISOString().slice(0,19).replace(/[T:]/g, '-');
+  a.href         = url;
+  a.download     = `delete_list_${ts}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  showToast(`✓ 已导出 ${deletedSet.size} 条记录`);
+}
+
+// ─────────────────────────────────────────────
+//  Scroll to top
+// ─────────────────────────────────────────────
+document.getElementById('scroll-area').addEventListener('scroll', function() {
+  const btn = document.getElementById('back-top');
+  btn.classList.toggle('visible', this.scrollTop > 400);
+});
+
+function scrollToTop() {
+  document.getElementById('scroll-area').scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// ─────────────────────────────────────────────
+//  Toast
+// ─────────────────────────────────────────────
+let toastTimer;
+function showToast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2000);
+}
+
+// ─────────────────────────────────────────────
+//  Modal
+// ─────────────────────────────────────────────
+function openModal(index) {
+  if (!modalList.length) return;
+  modalIndex = index;
+  renderModal();
+  document.getElementById('modal').classList.add('open');
+  document.getElementById('modal-close').style.display = 'flex';
+  document.getElementById('modal-counter').style.display = 'block';
+}
+
+function closeModal() {
+  document.getElementById('modal').classList.remove('open');
+  document.getElementById('modal-close').style.display = 'none';
+  document.getElementById('modal-counter').style.display = 'none';
+}
+
+function renderModal() {
+  const item = modalList[modalIndex];
+  if (!item) return;
+
+  const img = document.getElementById('modal-img');
+  img.classList.add('loading');
+  img.src = item.src;
+  img.onload  = () => img.classList.remove('loading');
+  img.onerror = () => img.classList.remove('loading');
+
+  document.getElementById('modal-prev').classList.toggle('hidden', modalIndex === 0);
+  document.getElementById('modal-next').classList.toggle('hidden', modalIndex === modalList.length - 1);
+  document.getElementById('modal-counter').textContent = `${modalIndex + 1} / ${modalList.length}`;
+}
+
+function modalNav(dir) {
+  const next = modalIndex + dir;
+  if (next < 0 || next >= modalList.length) return;
+  modalIndex = next;
+  renderModal();
+}
+
+// Keyboard
+document.addEventListener('keydown', e => {
+  const modal = document.getElementById('modal');
+  if (!modal.classList.contains('open')) return;
+  if (e.key === 'Escape' || e.key === 'Enter') { closeModal(); return; }
+  if (e.key === 'ArrowLeft'  || e.key === 'ArrowUp')    modalNav(-1);
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown')  modalNav(1);
+});
+
+// Touch swipe to close (vertical)
+let touchStartY = 0;
+let touchStartX = 0;
+document.getElementById('modal').addEventListener('touchstart', e => {
+  touchStartY = e.touches[0].clientY;
+  touchStartX = e.touches[0].clientX;
+}, { passive: true });
+
+document.getElementById('modal').addEventListener('touchend', e => {
+  const dy = e.changedTouches[0].clientY - touchStartY;
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 60) {
+    closeModal(); // swipe up or down to close
+  } else if (Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > 60) {
+    modalNav(dx < 0 ? 1 : -1); // swipe left/right to navigate
+  }
+}, { passive: true });
+
+// Click backdrop to close
+document.getElementById('modal-backdrop').addEventListener('click', closeModal);
+
+// ─────────────────────────────────────────────
+//  Start
+// ─────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
