@@ -587,7 +587,7 @@
 //  Config
 // ─────────────────────────────────────────────
 const BASE_URL = 'https://p1.dlozs.top/manga';
-const LS_KEY   = 'manga_deleted_v1';
+let supabaseCfg = null;
 
 // ─────────────────────────────────────────────
 //  State
@@ -604,32 +604,78 @@ let modalIndex  = 0;
 let modalList   = [];          // array of {src, path} for current folder
 
 // ─────────────────────────────────────────────
-//  LocalStorage helpers
+//  Supabase Sync Helpers
 // ─────────────────────────────────────────────
-function loadState() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (raw) deletedSet = new Set(JSON.parse(raw));
-  } catch(e) { deletedSet = new Set(); }
+function getHeaders() {
+  return {
+    'apikey': supabaseCfg.SUPABASE_ANON_KEY,
+    'Authorization': `Bearer ${supabaseCfg.SUPABASE_ANON_KEY}`,
+    'Content-Type': 'application/json'
+  };
 }
 
-function saveState() {
+async function loadSupabaseState() {
+  if (!supabaseCfg?.SUPABASE_URL) return;
   try {
-    localStorage.setItem(LS_KEY, JSON.stringify([...deletedSet]));
-  } catch(e) { showToast('⚠ 存储失败，可能已满'); }
+    const res = await fetch(`${supabaseCfg.SUPABASE_URL}/rest/v1/manga_deletions?select=path`, {
+      headers: getHeaders()
+    });
+    if (res.ok) {
+      const rows = await res.json();
+      deletedSet = new Set(rows.map(r => r.path));
+    }
+  } catch(e) {
+    console.warn('远端状态加载失败', e);
+  }
+}
+
+async function syncInsert(paths) {
+  if (!supabaseCfg?.SUPABASE_URL || !paths.length) return;
+  try {
+    const body = paths.map(p => ({ path: p }));
+    await fetch(`${supabaseCfg.SUPABASE_URL}/rest/v1/manga_deletions`, {
+      method: 'POST',
+      headers: { ...getHeaders(), 'Prefer': 'resolution=ignore-duplicates' },
+      body: JSON.stringify(body)
+    });
+  } catch(e) { console.error('同步增加失败', e); }
+}
+
+async function syncDelete(paths) {
+  if (!supabaseCfg?.SUPABASE_URL || !paths.length) return;
+  try {
+    const encodedList = paths.map(p => `"${p.replace(/"/g, '""')}"`).join(',');
+    await fetch(`${supabaseCfg.SUPABASE_URL}/rest/v1/manga_deletions?path=in.(${encodeURIComponent(encodedList)})`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+  } catch(e) { console.error('同步删除失败', e); }
 }
 
 // ─────────────────────────────────────────────
 //  Init
 // ─────────────────────────────────────────────
 async function init() {
-  loadState();
   try {
+    // 1. Load config
+    const cfgRes = await fetch('./config.json');
+    if (cfgRes.ok) {
+      supabaseCfg = await cfgRes.json();
+    }
+    
+    // 2. Load Supabase state
+    if (supabaseCfg?.SUPABASE_URL) {
+      document.querySelector('#loading .load-sub').textContent = '正在与云端同步标记...';
+      await loadSupabaseState();
+    }
+
+    // 3. Load structure
+    document.querySelector('#loading .load-sub').textContent = '正在加载图书库...';
     const res  = await fetch('./structure.json');
     if (!res.ok) throw new Error(res.statusText);
     data = await res.json();
   } catch(e) {
-    document.querySelector('#loading .load-sub').textContent = '❌ 无法加载 structure.json: ' + e.message;
+    document.querySelector('#loading .load-sub').textContent = '❌ 无法加载初始文件: ' + e.message;
     return;
   }
   document.getElementById('loading').style.display = 'none';
@@ -819,19 +865,21 @@ function toggleFolderMark(folder, card) {
   const children = folder.children || [];
   if (!children.length) return;
 
-  const allMarked = children.every(c => deletedSet.has(`manga/${folder.name}/${c.name}`));
+  const paths = children.map(c => `manga/${folder.name}/${c.name}`);
+  const allMarked = paths.every(p => deletedSet.has(p));
 
   if (allMarked) {
-    children.forEach(c => deletedSet.delete(`manga/${folder.name}/${c.name}`));
+    paths.forEach(p => deletedSet.delete(p));
     card.classList.remove('marked');
     showToast(`✓ 取消标记「${folder.name}」(${children.length} 张)`);
+    syncDelete(paths);
   } else {
-    children.forEach(c => deletedSet.add(`manga/${folder.name}/${c.name}`));
+    paths.forEach(p => deletedSet.add(p));
     card.classList.add('marked');
     showToast(`🗑 标记删除「${folder.name}」(${children.length} 张)`);
+    syncInsert(paths);
   }
 
-  saveState();
   updateStats();
 }
 
@@ -904,11 +952,12 @@ function toggleImageMark(card, path) {
   if (deletedSet.has(path)) {
     deletedSet.delete(path);
     card.classList.remove('marked');
+    syncDelete([path]);
   } else {
     deletedSet.add(path);
     card.classList.add('marked');
+    syncInsert([path]);
   }
-  saveState();
   updateStats();
 }
 
