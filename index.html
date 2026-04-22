@@ -252,6 +252,51 @@
     font-size: 18px;
   }
 
+  /* ── Pagination ── */
+  #pagination-container {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 20px 0;
+    margin-top: 10px;
+    font-family: var(--mono);
+    font-size: 13px;
+    width: 100%;
+  }
+  .page-btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 12px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: var(--mono);
+  }
+  .page-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .page-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .page-input {
+    width: 50px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px;
+    border-radius: var(--radius);
+    text-align: center;
+    font-family: var(--mono);
+  }
+  .page-input:focus {
+    border-color: var(--accent);
+    outline: none;
+  }
+
   /* ── Image Grid (inner page) ── */
   #image-grid {
     display: grid;
@@ -550,6 +595,7 @@
 
   <div id="scroll-area">
     <div id="folder-grid"></div>
+    <div id="pagination-container" style="display:none"></div>
     <div id="image-grid" style="display:none"></div>
   </div>
 </div>
@@ -596,6 +642,9 @@ let data        = [];          // parsed structure.json
 let deletedSet  = new Set();   // paths marked for deletion
 let mode        = 'view';      // 'view' | 'delete'
 let curFolder   = null;        // null = home, else folder object
+let currentPage = 1;
+const ITEMS_PER_PAGE = 20;
+let homeScrollTop = 0;
 
 let lazyObs     = null;        // IntersectionObserver instance
 
@@ -627,6 +676,31 @@ async function loadSupabaseState() {
   } catch(e) {
     console.warn('远端状态加载失败', e);
   }
+
+  try {
+    const progRes = await fetch(`${supabaseCfg.SUPABASE_URL}/rest/v1/manga_progress?id=eq.1`, {
+      headers: getHeaders()
+    });
+    if (progRes.ok) {
+      const progRows = await progRes.json();
+      if (progRows.length > 0 && progRows[0].page_num) {
+        currentPage = progRows[0].page_num;
+      }
+    }
+  } catch(e) {
+    console.warn('远端进度加载失败', e);
+  }
+}
+
+async function syncProgress(page) {
+  if (!supabaseCfg?.SUPABASE_URL) return;
+  try {
+    await fetch(`${supabaseCfg.SUPABASE_URL}/rest/v1/manga_progress?id=eq.1`, {
+      method: 'PATCH',
+      headers: { ...getHeaders(), 'Prefer': 'return=minimal' },
+      body: JSON.stringify({ page_num: page })
+    });
+  } catch(e) { console.error('同步进度失败', e); }
 }
 
 async function syncInsert(paths) {
@@ -809,10 +883,12 @@ function renderHome() {
   document.getElementById('image-grid').style.display  = 'none';
   document.getElementById('crumb-sep').style.display   = 'none';
   document.getElementById('crumb-folder').style.display = 'none';
-  document.getElementById('scroll-area').scrollTop = 0;
 
   const grid = document.getElementById('folder-grid');
   grid.innerHTML = '';
+
+  const pagContainer = document.getElementById('pagination-container');
+  if (pagContainer) pagContainer.style.display = 'none';
 
   if (!data.length) {
     grid.innerHTML = '<div class="empty-state"><div class="empty-icon">📂</div>没有找到文件夹</div>';
@@ -820,7 +896,15 @@ function renderHome() {
     return;
   }
 
-  data.forEach(folder => {
+  const totalPages = Math.ceil(data.length / ITEMS_PER_PAGE);
+  if (currentPage > totalPages) currentPage = totalPages || 1;
+  if (currentPage < 1) currentPage = 1;
+
+  const start = (currentPage - 1) * ITEMS_PER_PAGE;
+  const end = start + ITEMS_PER_PAGE;
+  const pageData = data.slice(start, end);
+
+  pageData.forEach(folder => {
     const coverImg  = folder.children?.[0]?.name;
     const coverSrc  = coverImg ? `${BASE_URL}/${encodeURIComponent(folder.name)}/${encodeURIComponent(coverImg)}` : null;
     const count     = folder.children?.length || 0;
@@ -857,8 +941,45 @@ function renderHome() {
     grid.appendChild(card);
   });
 
+  if (totalPages > 1 && pagContainer) {
+    pagContainer.style.display = 'flex';
+    pagContainer.innerHTML = `
+      <button class="page-btn" onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>上一页</button>
+      <span>${currentPage} / ${totalPages}</span>
+      <button class="page-btn" onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>下一页</button>
+      <input type="number" class="page-input" id="page-jump-input" min="1" max="${totalPages}" value="${currentPage}" onkeypress="if(event.key === 'Enter') jumpPage()">
+      <button class="page-btn" onclick="jumpPage()">跳转</button>
+    `;
+  }
+
   setupLazy(grid);
   updateStats();
+
+  if (homeScrollTop > 0) {
+    requestAnimationFrame(() => {
+      document.getElementById('scroll-area').scrollTop = homeScrollTop;
+      homeScrollTop = 0;
+    });
+  } else {
+    document.getElementById('scroll-area').scrollTop = 0;
+  }
+}
+
+function changePage(page) {
+  const totalPages = Math.ceil(data.length / ITEMS_PER_PAGE);
+  if (page < 1 || page > totalPages) return;
+  currentPage = page;
+  homeScrollTop = 0;
+  syncProgress(page);
+  renderHome();
+}
+
+function jumpPage() {
+  const input = document.getElementById('page-jump-input');
+  const page = parseInt(input.value, 10);
+  if (!isNaN(page)) {
+    changePage(page);
+  }
 }
 
 function toggleFolderMark(folder, card) {
@@ -888,12 +1009,16 @@ function toggleFolderMark(folder, card) {
 // ─────────────────────────────────────────────
 function openFolder(folder, fromPopState = false) {
   if (fromPopState !== true) {
+    const scrollArea = document.getElementById('scroll-area');
+    homeScrollTop = scrollArea ? scrollArea.scrollTop : 0;
     history.pushState({ view: 'folder', name: folder.name }, '', '#folder=' + encodeURIComponent(folder.name));
   }
   curFolder = folder;
   clearObservers();
 
   document.getElementById('folder-grid').style.display = 'none';
+  const pagContainer = document.getElementById('pagination-container');
+  if (pagContainer) pagContainer.style.display = 'none';
   document.getElementById('image-grid').style.display  = 'grid';
   document.getElementById('crumb-sep').style.display   = 'inline';
   const crumbFolder = document.getElementById('crumb-folder');
