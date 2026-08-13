@@ -80,10 +80,32 @@
     margin-left: auto;
     color: var(--text-muted);
     font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
   }
 
   #header-stats .del-count {
     color: var(--red);
+  }
+
+  #header-stats .export-btn-header {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--green);
+    padding: 4px 10px;
+    border-radius: var(--radius);
+    cursor: pointer;
+    font-family: var(--mono);
+    font-size: 11px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s;
+  }
+  #header-stats .export-btn-header:hover {
+    background: rgba(93,232,160,0.1);
+    border-color: var(--green);
   }
 
   /* ── Scroll container ── */
@@ -387,13 +409,7 @@
     background: var(--red-dim);
   }
 
-  .fab.export-btn {
-    border-color: var(--green);
-    color: var(--green);
-  }
-  .fab.export-btn:hover {
-    background: rgba(93,232,160,0.1);
-  }
+
 
   .fab-icon { font-size: 16px; line-height: 1; }
 
@@ -585,6 +601,9 @@
       <span id="crumb-folder" style="display:none"></span>
     </div>
     <div id="header-stats">
+      <button class="export-btn-header" id="export-btn" onclick="exportList()" style="display:none">
+        <span>⬇</span> 导出删除列表
+      </button>
       <span id="stat-text"></span>
     </div>
   </div>
@@ -601,8 +620,9 @@
 </div>
 
 <div id="float-bar">
-  <button class="fab export-btn" id="export-btn" onclick="exportList()" style="display:none">
-    <span class="fab-icon">⬇</span> 导出删除列表
+  <button class="fab" id="hide-btn" onclick="toggleHideMarked()">
+    <span class="fab-icon" id="hide-icon">👻</span>
+    <span id="hide-label">隐藏已标记</span>
   </button>
   <button class="fab mode-toggle" id="mode-btn" onclick="toggleMode()">
     <span class="fab-icon" id="mode-icon">👁</span>
@@ -641,6 +661,7 @@ let supabaseCfg = null;
 let data        = [];          // parsed structure.json
 let deletedSet  = new Set();   // paths marked for deletion
 let mode        = 'view';      // 'view' | 'delete'
+let hideMarked  = false;       // hide fully marked folders
 let curFolder   = null;        // null = home, else folder object
 let currentPage = 1;
 const ITEMS_PER_PAGE = 20;
@@ -817,6 +838,22 @@ function applyMode() {
   }
 }
 
+function toggleHideMarked() {
+  hideMarked = !hideMarked;
+  const btn = document.getElementById('hide-btn');
+  const icon = document.getElementById('hide-icon');
+  if (hideMarked) {
+    btn.style.borderColor = 'var(--accent)';
+    btn.style.color = 'var(--accent)';
+    icon.textContent = '🙈';
+  } else {
+    btn.style.borderColor = '';
+    btn.style.color = '';
+    icon.textContent = '👻';
+  }
+  if (!curFolder) renderHome();
+}
+
 // ─────────────────────────────────────────────
 //  Stats bar
 // ─────────────────────────────────────────────
@@ -914,6 +951,8 @@ function renderHome() {
     const folderPath  = `manga/${folder.name}`;
     const allMarked   = folder.children?.length > 0 && folder.children.every(c => deletedSet.has(`manga/${folder.name}/${c.name}`));
 
+    if (hideMarked && allMarked) return;
+
     const card = document.createElement('div');
     card.className = 'folder-card' + (allMarked ? ' marked' : '');
     card.dataset.folder = folder.name;
@@ -946,10 +985,11 @@ function renderHome() {
     pagContainer.style.display = 'flex';
     pagContainer.innerHTML = `
       <button class="page-btn" onclick="changePage(${currentPage - 1})" ${currentPage === 1 ? 'disabled' : ''}>上一页</button>
-      <span>${currentPage} / ${totalPages}</span>
+      <span id="page-text" onclick="editPage()" style="cursor: pointer; padding: 0 8px; font-weight: bold; transition: color 0.15s;" onmouseover="this.style.color='var(--accent)'" onmouseout="this.style.color=''">
+        ${currentPage} / ${totalPages}
+      </span>
+      <input type="number" id="page-input-edit" class="page-input" style="display:none; width: 60px;" min="1" max="${totalPages}" value="${currentPage}" onblur="cancelEditPage()" onkeypress="if(event.key === 'Enter') jumpPageEdit(this.value, ${totalPages})">
       <button class="page-btn" onclick="changePage(${currentPage + 1})" ${currentPage === totalPages ? 'disabled' : ''}>下一页</button>
-      <input type="number" class="page-input" id="page-jump-input" min="1" max="${totalPages}" value="${currentPage}" onkeypress="if(event.key === 'Enter') jumpPage()">
-      <button class="page-btn" onclick="jumpPage()">跳转</button>
     `;
   }
 
@@ -975,11 +1015,31 @@ function changePage(page) {
   renderHome();
 }
 
-function jumpPage() {
-  const input = document.getElementById('page-jump-input');
-  const page = parseInt(input.value, 10);
-  if (!isNaN(page)) {
-    changePage(page);
+function editPage() {
+  document.getElementById('page-text').style.display = 'none';
+  const input = document.getElementById('page-input-edit');
+  input.style.display = 'inline-block';
+  input.focus();
+  input.select();
+}
+
+function cancelEditPage() {
+  setTimeout(() => {
+    const text = document.getElementById('page-text');
+    const input = document.getElementById('page-input-edit');
+    if (text && input) {
+      text.style.display = 'inline-block';
+      input.style.display = 'none';
+    }
+  }, 100);
+}
+
+function jumpPageEdit(val, total) {
+  let p = parseInt(val, 10);
+  if (!isNaN(p)) {
+    if (p < 1) p = 1;
+    if (p > total) p = total;
+    changePage(p);
   }
 }
 
